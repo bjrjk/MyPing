@@ -3,4 +3,4 @@ project(MyPing)
 
 set(CMAKE_CXX_STANDARD 17)
 
-add_executable(MyPing main.cpp)
+add_executable(MyPing Ping.cpp ArgParser.cpp Err.cpp)
