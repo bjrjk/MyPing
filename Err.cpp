@@ -7,6 +7,7 @@ void errorQuit(const char *fmt, ...) {
   vprintf(fmt, ap);
   va_end(ap);
 
-  printf("Errno: %d\n", errno);
+  if(errno != 0)
+    printf("Errno: %d\n", errno);
   exit(1);
 }

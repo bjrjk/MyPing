@@ -14,8 +14,10 @@ std::unordered_map<std::string, std::string> argParse_ping(int argc, char** argv
         args["a"] = string(optarg);
         break;
       case 'h':
-        errorQuit("Usage: MyPing -a [address]\n"
-                  "MyPing -h\n"
+        errorQuit("Usage: MyPing [Options]\n"
+                  "-a [Hostname/IPv4 Address/IPv6 Address] -- Specify ping destination\n"
+                  "-h -- Display help information\n"
+                  "-v -- Print more verbose information\n"
         );
         break;
       case 'v':

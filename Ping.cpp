@@ -19,7 +19,7 @@ static addrinfo* host_service(const char *host, const char *serv, int family, in
 static char* sock_to_ip_presentation(const struct sockaddr *sa, socklen_t salen); // Warning: Non-reentrant
 static char* sock2ip(const struct sockaddr *sa, socklen_t salen);
 
-static const int datalen = 56; // Bytes of data following ICMP header
+static const int datalen = 128; // Bytes of data following ICMP header
 static std::string host; // Destination of ICMP packet
 static pid_t pid; // Process ID for current MyPing program
 static char sendbuf[BUFSIZE], recvbuf[BUFSIZE]; // Buffer for ICMP packets
@@ -66,6 +66,7 @@ int main(int argc, char **argv) {
   return 0;
 }
 
+// Receive ICMPv4 packet
 void recv_v4(char *ptr, ssize_t len, struct timeval *tvrecv) {
   int hlen1, icmplen;
   double rtt;
@@ -101,6 +102,7 @@ void recv_v4(char *ptr, ssize_t len, struct timeval *tvrecv) {
   }
 }
 
+// Receive ICMPv6 packet
 void recv_v6(char *ptr, ssize_t len, struct timeval *tvrecv) {
   int hlen1, icmp6len;
   double rtt;
@@ -108,19 +110,15 @@ void recv_v6(char *ptr, ssize_t len, struct timeval *tvrecv) {
   struct icmp6_hdr *icmp6;
   struct timeval *tvsend;
 
-  // Very Confusing!!!!!
-
   /*
-  ip6 = (struct ip6_hdr *) ptr;
-  hlen1 = sizeof(struct ip6_hdr);
-  if (ip6->ip6_nxt != IPPROTO_ICMPV6)
-    errorQuit("next header not IPPROTO_ICMPV6");
+   Outgoing packets automatically have an IPv6 header prepended to them (based on the
+   destination address).  Incoming packets on the socket are received with the IPv6 header and
+   any extension headers removed.
 
-
-  icmp6 = (struct icmp6_hdr *) (ptr + hlen1);
-  if ((icmp6len = len - hlen1) < 8)
-    errorQuit("icmp6len (%d) < 8", icmp6len);
-  */
+   Refer to:
+   https://stackoverflow.com/questions/13250115/get-icmpv6-header-from-ipv6-packet
+   http://manpages.ubuntu.com/manpages/hirsute/en/man4/icmp6.4freebsd.html
+   */
 
   icmp6 = (struct icmp6_hdr *) (ptr);
   icmp6len = len;
@@ -248,6 +246,7 @@ static void SIGALRM_HANDLER(int signo) {
   alarm(1);
 }
 
+// Function to sub timeval struct
 void tv_sub(timeval *out, timeval *in) {
   if ((out->tv_usec -= in->tv_usec) < 0) {  /* out -= in */
     --out->tv_sec;
