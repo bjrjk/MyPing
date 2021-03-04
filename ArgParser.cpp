@@ -8,7 +8,7 @@ std::unordered_map<std::string, std::string> argParse_ping(int argc, char** argv
 
   opterr = 0; // Inhibit the error message 'getopt' prints for unrecognized options
 
-  while ((argCh = getopt(argc, argv, "a:hv")) != -1) {
+  while ((argCh = getopt(argc, argv, "a:ht:v")) != -1) {
     switch (argCh) {
       case 'a':
         args["a"] = string(optarg);
@@ -17,8 +17,12 @@ std::unordered_map<std::string, std::string> argParse_ping(int argc, char** argv
         errorQuit("Usage: MyPing [Options]\n"
                   "-a [Hostname/IPv4 Address/IPv6 Address] -- Specify ping destination\n"
                   "-h -- Display help information\n"
+                  "-t [TTL(IPv4)/Hop Limit(IPv6) Value] -- Set Time To Live value, Default 128\n"
                   "-v -- Print more verbose information\n"
         );
+        break;
+      case 't':
+        args["t"] = string(optarg);
         break;
       case 'v':
         args["v"] = "1";

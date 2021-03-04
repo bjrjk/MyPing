@@ -13,11 +13,17 @@ struct proto {
   int icmpproto;  // IPPROTO_xxx value for ICMP
 };
 
+static void recv_v4(char *ptr, ssize_t len, struct timeval *tvrecv);
+static void recv_v6(char *ptr, ssize_t len, struct timeval *tvrecv);
+static void send_v4(void);
+static void send_v6(void);
+static unsigned short checksum(unsigned short *addr, int len);
 static void eventLoop();
 static void SIGALRM_HANDLER(int);
 static addrinfo* host_service(const char *host, const char *serv, int family, int socktype);
 static char* sock_to_ip_presentation(const struct sockaddr *sa, socklen_t salen); // Warning: Non-reentrant
 static char* sock2ip(const struct sockaddr *sa, socklen_t salen);
+static void tv_sub(struct timeval *, struct timeval *);
 
 static const int datalen = 128; // Bytes of data following ICMP header
 static std::string host; // Destination of ICMP packet
@@ -26,18 +32,29 @@ static char sendbuf[BUFSIZE], recvbuf[BUFSIZE]; // Buffer for ICMP packets
 static int verbose;
 static int sockfd; // File descriptor for socket
 static int packetCount; // ICMP packet counter
+static int ttl = 128; // Time to live Value
 
 proto* pr;
 proto proto_v4 = {recv_v4, send_v4, NULL, NULL, 0, IPPROTO_ICMP};
 proto proto_v6 = {recv_v6, send_v6, NULL, NULL, 0, IPPROTO_ICMPV6};
 
 
-int main(int argc, char **argv) {
+static void initArgs(int argc, char **argv) {
   // Parse arguments
   auto args = argParse_ping(argc, argv);
-  host = args["a"]; //Get hostname from arguments
+  // Get hostname from arguments
+  host = args["a"];
+  // Whether printing verbose information
   if(args["v"] == "1")
     verbose++;
+  if(args.count("t"))
+    ttl = std::stoi(args["t"]);
+}
+
+int main(int argc, char **argv) {
+  // Initiate arguments
+  initArgs(argc, argv);
+
   // Get process ID
   pid = getpid();
   // Register SIGALRM signal handler
@@ -67,7 +84,7 @@ int main(int argc, char **argv) {
 }
 
 // Receive ICMPv4 packet
-void recv_v4(char *ptr, ssize_t len, struct timeval *tvrecv) {
+static void recv_v4(char *ptr, ssize_t len, struct timeval *tvrecv) {
   int hlen1, icmplen;
   double rtt;
   struct ip *ip;
@@ -103,7 +120,7 @@ void recv_v4(char *ptr, ssize_t len, struct timeval *tvrecv) {
 }
 
 // Receive ICMPv6 packet
-void recv_v6(char *ptr, ssize_t len, struct timeval *tvrecv) {
+static void recv_v6(char *ptr, ssize_t len, struct timeval *tvrecv) {
   int hlen1, icmp6len;
   double rtt;
   struct ip6_hdr *ip6;
@@ -145,7 +162,7 @@ void recv_v6(char *ptr, ssize_t len, struct timeval *tvrecv) {
 }
 
 // Calculate checksum for ICMPv4 packet
-unsigned short checksum(unsigned short *addr, int len) {
+static unsigned short checksum(unsigned short *addr, int len) {
   int nleft = len;
   int sum = 0;
   unsigned short *w = addr;
@@ -175,7 +192,7 @@ unsigned short checksum(unsigned short *addr, int len) {
 }
 
 // Send ICMP packet in IPv4 protocol
-void send_v4() {
+static void send_v4() {
   int len;
   struct icmp *icmp;
 
@@ -194,7 +211,7 @@ void send_v4() {
 }
 
 // Send ICMP packet in IPv6 protocol
-void send_v6() {
+static void send_v6() {
   int len;
   struct icmp6_hdr *icmp6;
 
@@ -212,7 +229,7 @@ void send_v6() {
 }
 
 // Main loop for program
-void eventLoop() {
+static void eventLoop() {
   int size;
   socklen_t len;
   ssize_t n;
@@ -222,6 +239,11 @@ void eventLoop() {
   sockfd = socket(pr->sasend->sa_family, SOCK_RAW, pr->icmpproto);
   size = BUFSIZE;
   setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
+
+  if (pr->icmpproto == IPPROTO_ICMP)
+    setsockopt(sockfd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
+  else // pr->icmpproto == IPPROTO_ICMPV6
+    setsockopt(sockfd, IPPROTO_IPV6, IPV6_UNICAST_HOPS, &ttl, sizeof(ttl));
 
   SIGALRM_HANDLER(SIGALRM);    // send first packet
 
@@ -247,7 +269,7 @@ static void SIGALRM_HANDLER(int signo) {
 }
 
 // Function to sub timeval struct
-void tv_sub(timeval *out, timeval *in) {
+static void tv_sub(timeval *out, timeval *in) {
   if ((out->tv_usec -= in->tv_usec) < 0) {  /* out -= in */
     --out->tv_sec;
     out->tv_usec += 1000000;

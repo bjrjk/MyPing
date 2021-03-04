@@ -30,15 +30,4 @@
 
 #define BUFSIZE 2048
 
-
-
-
-void recv_v4(char *ptr, ssize_t len, struct timeval *tvrecv);
-void recv_v6(char *ptr, ssize_t len, struct timeval *tvrecv);
-void send_v4(void);
-void send_v6(void);
-
-
-void tv_sub(struct timeval *, struct timeval *);
-
 #endif
