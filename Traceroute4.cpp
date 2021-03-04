@@ -3,7 +3,7 @@
 
 // About sock API, refer to https://www.ibm.com/support/knowledgecenter/zh/ssw_ibm_i_71/apis/ssocko.htm
 
-#include "Traceroute.h"
+#include "Traceroute4.h"
 #include "ArgParser.h"
 #include "Err.h"
 
@@ -17,9 +17,7 @@ struct proto {
 };
 
 static void recv_v4(char *ptr, ssize_t len, struct timeval *tvrecv);
-static void recv_v6(char *ptr, ssize_t len, struct timeval *tvrecv);
 static void send_v4();
-static void send_v6();
 static unsigned short checksum(unsigned short *addr, int len);
 static void eventLoop();
 static addrinfo* host_service(const char *host, const char *serv, int family, int socktype);
@@ -33,12 +31,10 @@ static pid_t pid; // Process ID for current MyPing program
 static char sendbuf[BUFSIZE], recvbuf[BUFSIZE]; // Buffer for ICMP packets
 static int sockfd; // File descriptor for socket
 static int ttl = 1; // Time to live Value
-static int specifiedHostFamily; // Specify the protocol(IPv4/IPv6) ping uses
 static bool recvOK;
 
 proto* pr;
 proto proto_v4 = {recv_v4, send_v4, NULL, NULL, 0, IPPROTO_ICMP};
-proto proto_v6 = {recv_v6, send_v6, NULL, NULL, 0, IPPROTO_ICMPV6};
 
 static void initArgs(int argc, char **argv) {
   // Parse arguments
@@ -47,13 +43,6 @@ static void initArgs(int argc, char **argv) {
   if(!args.count("a"))
     errorQuit("Hostname unspecified, use -h to display help\n");
   host = args["a"];
-  // If specified protocol, set protocol
-  if(args["protocol"] == "4")
-    specifiedHostFamily = AF_INET;
-  else if(args["protocol"] == "6")
-    specifiedHostFamily = AF_INET6;
-  else
-    specifiedHostFamily = AF_UNSPEC;
 }
 
 int main(int argc, char **argv) {
@@ -61,8 +50,8 @@ int main(int argc, char **argv) {
   initArgs(argc, argv);
   // Get process ID
   pid = getpid();
-  // Resolve a hostname to a socket addrinfo struct
-  addrinfo *ai = host_service(host.c_str(), NULL, specifiedHostFamily, 0);
+  // Resolve a hostname to a socket addrinfo struct, IPv4 Only
+  addrinfo *ai = host_service(host.c_str(), NULL, AF_INET, 0);
   if(!ai)
     errorQuit("Hostname resolve failed\n");
   // Print prompt
@@ -72,9 +61,7 @@ int main(int argc, char **argv) {
   if (ai->ai_family == AF_INET)
     pr = &proto_v4;
   else if (ai->ai_family == AF_INET6) {
-    pr = &proto_v6;
-    if (IN6_IS_ADDR_V4MAPPED(&(((struct sockaddr_in6 *) ai->ai_addr)->sin6_addr)))
-      errorQuit("Can't ping IPv4-mapped IPv6 address\n");
+    errorQuit("Don't support IPv6\n");
   } else
     errorQuit("Unknown address family %d\n", ai->ai_family);
 
@@ -126,50 +113,6 @@ static void recv_v4(char *ptr, ssize_t len, struct timeval *tvrecv) {
   }
 }
 
-// Receive ICMPv6 packet
-static void recv_v6(char *ptr, ssize_t len, struct timeval *tvrecv) {
-  int hlen1, icmp6len;
-  double rtt;
-  struct ip6_hdr *ip6;
-  struct icmp6_hdr *icmp6;
-  struct timeval *tvsend;
-
-  /*
-   Outgoing packets automatically have an IPv6 header prepended to them (based on the
-   destination address).  Incoming packets on the socket are received with the IPv6 header and
-   any extension headers removed.
-
-   Refer to:
-   https://stackoverflow.com/questions/13250115/get-icmpv6-header-from-ipv6-packet
-   http://manpages.ubuntu.com/manpages/hirsute/en/man4/icmp6.4freebsd.html
-   */
-
-  icmp6 = (struct icmp6_hdr *) (ptr);
-  icmp6len = len;
-/*
-  if (icmp6->icmp6_type == ICMP6_ECHO_REPLY) {
-    if (icmp6->icmp6_id != pid)
-      return;
-    if (icmp6len < 16)
-      errorQuit("icmp6len (%d) < 16", icmp6len);
-
-    tvsend = (struct timeval *) (icmp6 + 1);
-    tv_sub(tvrecv, tvsend);
-    rtt = tvrecv->tv_sec * 1000.0 + tvrecv->tv_usec / 1000.0;
-
-    if (verbose >= 1)
-      printf("%d bytes from %s: icmp_seq=%u hlim=%d rtt=%.3f ms\n",
-             icmp6len, sock2ip(pr->sarecv, pr->salen),
-             icmp6->icmp6_seq, ip6->ip6_hlim, rtt);
-
-  } else if (verbose >= 2) {
-    printf("  %d bytes from %s: type = %d, code = %d\n",
-           icmp6len, sock2ip(pr->sarecv, pr->salen),
-           icmp6->icmp6_type, icmp6->icmp6_code);
-  }
-  */
-}
-
 // Calculate checksum for ICMPv4 packet
 static unsigned short checksum(unsigned short *addr, int len) {
   int nleft = len;
@@ -219,30 +162,12 @@ static void send_v4() {
   sendto(sockfd, sendbuf, len, 0, pr->sasend, pr->salen);
 }
 
-// Send ICMP packet in IPv6 protocol
-static void send_v6() {
-  int len;
-  struct icmp6_hdr *icmp6;
-
-  icmp6 = (struct icmp6_hdr *) sendbuf;
-  icmp6->icmp6_type = ICMP6_ECHO_REQUEST;
-  icmp6->icmp6_code = 0;
-  icmp6->icmp6_id = pid;
-  icmp6->icmp6_seq = ttl;
-  gettimeofday((struct timeval *) (icmp6 + 1), NULL);
-
-  len = 8 + datalen;    /* 8-byte ICMPv6 header */
-
-  //System calculate checksum automatically
-  sendto(sockfd, sendbuf, len, 0, pr->sasend, pr->salen);
-}
-
 // Main loop for program
 static void eventLoop() {
   int size;
   socklen_t len;
   ssize_t n;
-  timeval tval1, tval2, tval3;
+  timeval tval1, tval2;
 
   // In order to use raw socket, the program must be elevated to root privilege!!!
   sockfd = socket(pr->sasend->sa_family, SOCK_RAW, pr->icmpproto);
@@ -254,10 +179,8 @@ static void eventLoop() {
 
   for (ttl = 1;ttl <= 256;ttl++) {
     // Set TTL
-    if (pr->icmpproto == IPPROTO_ICMP)
-      setsockopt(sockfd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
-    else // pr->icmpproto == IPPROTO_ICMPV6
-      setsockopt(sockfd, IPPROTO_IPV6, IPV6_UNICAST_HOPS, &ttl, sizeof(ttl));
+    setsockopt(sockfd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
+
     (*pr->fsend)();
     gettimeofday(&tval1, NULL);
 

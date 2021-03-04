@@ -69,22 +69,14 @@ std::unordered_map<std::string, std::string> argParse_traceroute(int argc, char*
 
   opterr = 0; // Inhibit the error message 'getopt' prints for unrecognized options
 
-  while ((argCh = getopt(argc, argv, "46a:h")) != -1) {
+  while ((argCh = getopt(argc, argv, "a:h")) != -1) {
     switch (argCh) {
-      case '4':
-        args["protocol"] = "4";
-        break;
-      case '6':
-        args["protocol"] = "6";
-        break;
       case 'a':
         args["a"] = string(optarg);
         break;
       case 'h':
-        errorQuit("Usage: MyTraceroute [Options]\n"
-                  "-4 -- Use IPv4 only.\n"
-                  "-6 -- Use IPv6 only.\n"
-                  "-a [Hostname/IPv4 Address/IPv6 Address] -- Specify traceroute destination.\n"
+        errorQuit("Usage: MyTraceroute4 [Options]\n"
+                  "-a [Hostname/IPv4 Address] -- Specify traceroute destination.\n"
                   "-h -- Display help information.\n"
         );
         break;

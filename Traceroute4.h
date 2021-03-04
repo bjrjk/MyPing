@@ -1,5 +1,5 @@
-#ifndef MYPING_TRACEROUTE_H
-#define MYPING_TRACEROUTE_H
+#ifndef MYPING_TRACEROUTE4_H
+#define MYPING_TRACEROUTE4_H
 
 #include <cstring>
 #include <csignal>
