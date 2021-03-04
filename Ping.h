@@ -9,6 +9,7 @@
 #include <cstdarg>
 #include <ctime>
 #include <string>
+#include <algorithm>
 
 #include <netinet/in.h>
 #include <netinet/in_systm.h>

@@ -1,13 +1,16 @@
+// Author: Jack Ren
 // Warning: this program must be run in root privilege!
+
+// About sock API, refer to https://www.ibm.com/support/knowledgecenter/zh/ssw_ibm_i_71/apis/ssocko.htm
 
 #include "Ping.h"
 #include "ArgParser.h"
 #include "Err.h"
 
 struct proto {
-  void (*fproc)(char *, ssize_t, struct timeval *);
-  void (*fsend)(void);
-  struct sockaddr *sasend;  // sockaddr for send,
+  void (*fproc)(char *, ssize_t, struct timeval *); // recv function
+  void (*fsend)(void); // send function
+  struct sockaddr *sasend;  // sockaddr for send
   struct sockaddr *sarecv;  // sockaddr for receive
   socklen_t salen;    // length of sockaddr
   int icmpproto;  // IPPROTO_xxx value for ICMP
@@ -20,6 +23,9 @@ static void send_v6(void);
 static unsigned short checksum(unsigned short *addr, int len);
 static void eventLoop();
 static void SIGALRM_HANDLER(int);
+static void SIGTERM_HANDLER(int);
+static void addRTTRecord(double);
+static void displayRTTStatistic();
 static addrinfo* host_service(const char *host, const char *serv, int family, int socktype);
 static char* sock_to_ip_presentation(const struct sockaddr *sa, socklen_t salen); // Warning: Non-reentrant
 static char* sock2ip(const struct sockaddr *sa, socklen_t salen);
@@ -29,38 +35,76 @@ static const int datalen = 128; // Bytes of data following ICMP header
 static std::string host; // Destination of ICMP packet
 static pid_t pid; // Process ID for current MyPing program
 static char sendbuf[BUFSIZE], recvbuf[BUFSIZE]; // Buffer for ICMP packets
-static int verbose;
+static int verbose = 1; // Indicate whether the message output is verbose. Level is from 0 to 2. 0 is the simplest one.
 static int sockfd; // File descriptor for socket
-static int packetCount; // ICMP packet counter
+static int sendPacketCount = 0, recvPacketCount = 0; // ICMP packet counter
+static double rttSum = 0, rttMin = 1e7, rttMax = 0;
 static int ttl = 128; // Time to live Value
+static int specifiedHostFamily; // Specify the protocol(IPv4/IPv6) ping uses
+static int broadcast = false; // Whether the packet is a broadcast packet
+static int interval = 1; // Ping interval
 
 proto* pr;
 proto proto_v4 = {recv_v4, send_v4, NULL, NULL, 0, IPPROTO_ICMP};
 proto proto_v6 = {recv_v6, send_v6, NULL, NULL, 0, IPPROTO_ICMPV6};
 
+// Add a round-trip time record
+static inline void addRTTRecord(double rtt) {
+  recvPacketCount++;
+  rttSum += rtt;
+  rttMin = std::min(rttMin, rtt);
+  rttMax = std::max(rttMax, rtt);
+}
+
+// Display round-trip time information in the epilogue of program
+static inline void displayRTTStatistic() {
+  printf("--- %s ping statistics ---\n", host.c_str());
+  printf("%d packets transmitted, %d packets received, %.1lf%% packet loss\n",
+         sendPacketCount, recvPacketCount, std::max((double)(sendPacketCount - recvPacketCount) / sendPacketCount * 100, 0.0));
+  printf("round-trip min/avg/max = %.3lf/%.3lf/%.3lf ms\n",
+         rttMin, rttSum/recvPacketCount, rttMax);
+}
 
 static void initArgs(int argc, char **argv) {
   // Parse arguments
   auto args = argParse_ping(argc, argv);
   // Get hostname from arguments
+  if(!args.count("a"))
+    errorQuit("Hostname unspecified, use -h to display help\n");
   host = args["a"];
-  // Whether printing verbose information
-  if(args["v"] == "1")
-    verbose++;
+  // Verbose information level
+  verbose = std::stoi(args["verbose"]);
+  // If specified TTL, set TTL value
   if(args.count("t"))
     ttl = std::stoi(args["t"]);
+  // If specified protocol, set protocol
+  if(args["protocol"] == "4")
+    specifiedHostFamily = AF_INET;
+  else if(args["protocol"] == "6")
+    specifiedHostFamily = AF_INET6;
+  else
+    specifiedHostFamily = AF_UNSPEC;
+  // Is broadcast?
+  if(args["b"] == "1")
+    broadcast = true;
+  // Set alarm interval?
+  if(args.count("i"))
+    interval = std::stoi(args["i"]);
 }
 
 int main(int argc, char **argv) {
   // Initiate arguments
   initArgs(argc, argv);
-
   // Get process ID
   pid = getpid();
-  // Register SIGALRM signal handler
-  signal(SIGALRM, SIGALRM_HANDLER);
+  // Register signal handler
+  signal(SIGALRM, SIGALRM_HANDLER); //SIGALRM
+  signal(SIGINT, SIGTERM_HANDLER); //SIGINT -- When pressing Ctrl+C on console, the SIGINT signal is triggered
+  signal(SIGTERM, SIGTERM_HANDLER); //SIGTERM -- When killing task in task manager (i.e. top/htop), the SIGTERM signal is triggered
   // Resolve a hostname to a socket addrinfo struct
-  addrinfo *ai = host_service(host.c_str(), NULL, 0, 0);
+  addrinfo *ai = host_service(host.c_str(), NULL, specifiedHostFamily, 0);
+  if(!ai)
+    errorQuit("Hostname resolve failed\n");
   // Print prompt
   printf("ping %s (%s): %d data bytes\n", ai->ai_canonname, sock2ip(ai->ai_addr, ai->ai_addrlen), datalen);
 
@@ -107,12 +151,14 @@ static void recv_v4(char *ptr, ssize_t len, struct timeval *tvrecv) {
     tvsend = (struct timeval *) icmp->icmp_data;
     tv_sub(tvrecv, tvsend);
     rtt = tvrecv->tv_sec * 1000.0 + tvrecv->tv_usec / 1000.0;
+    addRTTRecord(rtt);
 
-    printf("%d bytes from %s: seq=%u, ttl=%d, rtt=%.3f ms\n",
+    if (verbose >= 1)
+      printf("%d bytes from %s: icmp_seq=%u ttl=%d rtt=%.3f ms\n",
            icmplen, sock2ip(pr->sarecv, pr->salen),
            icmp->icmp_seq, ip->ip_ttl, rtt);
 
-  } else if (verbose) {
+  } else if (verbose >= 2) {
     printf("  %d bytes from %s: type = %d, code = %d\n",
            icmplen, sock2ip(pr->sarecv, pr->salen),
            icmp->icmp_type, icmp->icmp_code);
@@ -149,12 +195,14 @@ static void recv_v6(char *ptr, ssize_t len, struct timeval *tvrecv) {
     tvsend = (struct timeval *) (icmp6 + 1);
     tv_sub(tvrecv, tvsend);
     rtt = tvrecv->tv_sec * 1000.0 + tvrecv->tv_usec / 1000.0;
+    addRTTRecord(rtt);
 
-    printf("%d bytes from %s: seq=%u, hlim=%d, rtt=%.3f ms\n",
+    if (verbose >= 1)
+      printf("%d bytes from %s: icmp_seq=%u hlim=%d rtt=%.3f ms\n",
            icmp6len, sock2ip(pr->sarecv, pr->salen),
            icmp6->icmp6_seq, ip6->ip6_hlim, rtt);
 
-  } else if (verbose) {
+  } else if (verbose >= 2) {
     printf("  %d bytes from %s: type = %d, code = %d\n",
            icmp6len, sock2ip(pr->sarecv, pr->salen),
            icmp6->icmp6_type, icmp6->icmp6_code);
@@ -200,7 +248,7 @@ static void send_v4() {
   icmp->icmp_type = ICMP_ECHO;
   icmp->icmp_code = 0;
   icmp->icmp_id = pid;
-  icmp->icmp_seq = packetCount++;
+  icmp->icmp_seq = sendPacketCount++;
   gettimeofday((struct timeval *) icmp->icmp_data, NULL);
 
   len = 8 + datalen;    /* checksum ICMP header and data */
@@ -219,7 +267,7 @@ static void send_v6() {
   icmp6->icmp6_type = ICMP6_ECHO_REQUEST;
   icmp6->icmp6_code = 0;
   icmp6->icmp6_id = pid;
-  icmp6->icmp6_seq = packetCount++;
+  icmp6->icmp6_seq = sendPacketCount++;
   gettimeofday((struct timeval *) (icmp6 + 1), NULL);
 
   len = 8 + datalen;    /* 8-byte ICMPv6 header */
@@ -237,13 +285,17 @@ static void eventLoop() {
 
   // In order to use raw socket, the program must be elevated to root privilege!!!
   sockfd = socket(pr->sasend->sa_family, SOCK_RAW, pr->icmpproto);
+  // Set RecvBuf size
   size = BUFSIZE;
   setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
-
+  // Set TTL
   if (pr->icmpproto == IPPROTO_ICMP)
     setsockopt(sockfd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
   else // pr->icmpproto == IPPROTO_ICMPV6
     setsockopt(sockfd, IPPROTO_IPV6, IPV6_UNICAST_HOPS, &ttl, sizeof(ttl));
+  // Broadcast option && In IPv4 Mode
+  if (broadcast && pr->icmpproto == IPPROTO_ICMP)
+    setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, &broadcast, sizeof(broadcast));
 
   SIGALRM_HANDLER(SIGALRM);    // send first packet
 
@@ -265,8 +317,15 @@ static void eventLoop() {
 // Request to send an ICMP Echo packet every second
 static void SIGALRM_HANDLER(int signo) {
   (*pr->fsend)();
-  alarm(1);
+  alarm(interval);
 }
+
+//When the program ended, output ping statistic information
+static void SIGTERM_HANDLER(int signo) {
+  displayRTTStatistic();
+  exit(0);
+}
+
 
 // Function to sub timeval struct
 static void tv_sub(timeval *out, timeval *in) {
