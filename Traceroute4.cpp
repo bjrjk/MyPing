@@ -38,7 +38,7 @@ proto proto_v4 = {recv_v4, send_v4, NULL, NULL, 0, IPPROTO_ICMP};
 
 static void initArgs(int argc, char **argv) {
   // Parse arguments
-  auto args = argParse_ping(argc, argv);
+  auto args = argParse_traceroute(argc, argv);
   // Get hostname from arguments
   if(!args.count("a"))
     errorQuit("Hostname unspecified, use -h to display help\n");
