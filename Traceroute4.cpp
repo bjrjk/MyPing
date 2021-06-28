@@ -94,7 +94,7 @@ static void recv_v4(char *ptr, ssize_t len, struct timeval *tvrecv) {
     tv_sub(tvrecv, tvsend);
     rtt = tvrecv->tv_sec * 1000.0 + tvrecv->tv_usec / 1000.0;
 
-    printf("%u:%8.2lf ms\t\t%s\n", icmp->icmp_seq, rtt, sock2ip(pr->sarecv, pr->salen));
+    printf("%2u:%8.2lf ms\t\t%s\t%ld bytes\n", icmp->icmp_seq, rtt, sock2ip(pr->sarecv, pr->salen), len);
     recvOK = true;
     exit(0);
   }else if (icmp->icmp_type == ICMP_TIME_EXCEEDED) {
@@ -107,8 +107,10 @@ static void recv_v4(char *ptr, ssize_t len, struct timeval *tvrecv) {
     tvsend = (struct timeval *) icmp->icmp_data;
     tv_sub(tvrecv, tvsend);
     rtt = tvrecv->tv_sec * 1000.0 + tvrecv->tv_usec / 1000.0;
-
-    printf("%u:%8.2lf ms\t\t%s\n", icmp->icmp_seq, rtt, ipStr);
+    if(len > 56)
+        printf("%2u:%8.2lf ms\t\t%s\t%ld bytes\n", icmp->icmp_seq, rtt, ipStr, len);
+    else
+        printf("%2u: ts discarded.\t%s\t%ld bytes\n", icmp->icmp_seq, ipStr, len);
     recvOK = true;
   }
 }
@@ -194,7 +196,7 @@ static void eventLoop() {
         if (errno == EINTR)
           continue;
         else{
-          printf("%u:          \t\tRequest Timeout.\n", ttl);
+          printf("%2u:          \t\tRequest Timeout.\n", ttl);
           break;
         }
       }
